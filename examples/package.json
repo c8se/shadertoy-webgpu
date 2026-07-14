@@ -10,12 +10,13 @@
   },
   "dependencies": {
     "@rubick24/math": "workspace:*",
-    "solid-js": "^1.9.3",
+    "@solidjs/web": "2.0.0-beta.17",
+    "solid-js": "2.0.0-beta.17",
     "solid-webgpu": "workspace:*",
     "solid-webgpu-gltf": "workspace:*"
   },
   "devDependencies": {
-    "vite-plugin-solid": "^2.11.0",
+    "vite-plugin-solid": "3.0.0-next.7",
     "vite": "^5.4.11"
   }
 }

@@ -7,7 +7,7 @@
     // "emitDeclarationOnly": true,
 
     "jsx": "preserve",
-    "jsxImportSource": "solid-js",
+    "jsxImportSource": "@solidjs/web",
     // "jsxImportSource": "solid-webgpu"
 
     "paths": {

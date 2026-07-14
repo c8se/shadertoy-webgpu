@@ -25,10 +25,10 @@ export const createBufferFromValue = (
     ...access(options)
   }))
 
-  createEffect(() => {
-    const val = access(value)
-    device.queue.writeBuffer(buffer(), 0, val)
-  })
+  createEffect(
+    () => [access(value), buffer()] as const,
+    ([val, target]) => device.queue.writeBuffer(target, 0, val)
+  )
   return buffer
 }
 
@@ -56,11 +56,18 @@ export const createTextureFromImage = (
     size
   }))
 
-  createEffect(() => {
-    const img = access(image)
-    const size = { width: img.width, height: img.height }
-    device.queue.copyExternalImageToTexture({ source: img }, { texture: texture() }, size)
-  })
+  createEffect(
+    () => {
+      const img = access(image)
+      return {
+        img,
+        size: { width: img.width, height: img.height },
+        texture: texture()
+      }
+    },
+    ({ img, size, texture }) =>
+      device.queue.copyExternalImageToTexture({ source: img }, { texture }, size)
+  )
   return texture
 }
 

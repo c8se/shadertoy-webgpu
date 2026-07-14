@@ -64,12 +64,18 @@ export const createUnlitMaterial = (
     usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
   })
   device.queue.writeBuffer(buffer, 0, bufferValue)
-  createEffect(() => {
-    albedo.copy(access(options ?? {}).albedo ?? [0, 0.5, 1])
-    const flag = new Uint32Array(bufferValue, 12, 1)
-    flag[0] = setBitOfValue(flag[0], 0, !!(albedoTexture() || albedoTextureSource()))
-    device.queue.writeBuffer(buffer, 0, bufferValue)
-  })
+  createEffect(
+    () => ({
+      albedo: access(options ?? {}).albedo ?? ([0, 0.5, 1] as Vec3Like),
+      hasTexture: !!(albedoTexture() || albedoTextureSource())
+    }),
+    values => {
+      albedo.copy(values.albedo)
+      const flag = new Uint32Array(bufferValue, 12, 1)
+      flag[0] = setBitOfValue(flag[0], 0, values.hasTexture)
+      device.queue.writeBuffer(buffer, 0, bufferValue)
+    }
+  )
 
   const texture = createMemo(() => {
     const _albedoTextureSource = albedoTextureSource()
@@ -108,23 +114,25 @@ export const createPBRMaterial = (
     usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
   })
 
-  createEffect(() => {
-    const ops = access(options)
-    new Vec3(_pbrBuffer).copy(ops?.albedo ?? Vec3.fromValues(1, 1, 1))
-    const pbrParamsValue = new Float32Array(_pbrBuffer, 12, 3)
-    pbrParamsValue[0] = ops?.metallic ?? 0
-    pbrParamsValue[1] = ops?.roughness ?? 0.5
-    pbrParamsValue[2] = ops?.occlusion ?? 1.0
-    const pbrFlag = new Uint32Array(_pbrBuffer, 24, 1)
-    pbrFlag[0] = setBitOfValue(pbrFlag[0], 0, !!(ops?.albedoTexture || ops?.albedoTextureSource))
-    pbrFlag[0] = setBitOfValue(
-      pbrFlag[0],
-      1,
-      !!(ops?.occlusionRoughnessMetallicTexture || ops?.occlusionRoughnessMetallicTextureSource)
-    )
+  createEffect(
+    () => access(options),
+    ops => {
+      new Vec3(_pbrBuffer).copy(ops?.albedo ?? Vec3.fromValues(1, 1, 1))
+      const pbrParamsValue = new Float32Array(_pbrBuffer, 12, 3)
+      pbrParamsValue[0] = ops?.metallic ?? 0
+      pbrParamsValue[1] = ops?.roughness ?? 0.5
+      pbrParamsValue[2] = ops?.occlusion ?? 1.0
+      const pbrFlag = new Uint32Array(_pbrBuffer, 24, 1)
+      pbrFlag[0] = setBitOfValue(pbrFlag[0], 0, !!(ops?.albedoTexture || ops?.albedoTextureSource))
+      pbrFlag[0] = setBitOfValue(
+        pbrFlag[0],
+        1,
+        !!(ops?.occlusionRoughnessMetallicTexture || ops?.occlusionRoughnessMetallicTextureSource)
+      )
 
-    device.queue.writeBuffer(buffer, 0, _pbrBuffer)
-  })
+      device.queue.writeBuffer(buffer, 0, _pbrBuffer)
+    }
+  )
 
   const { buffer: base, update: updateBase } = createUniformBufferBase()
   const { buffer: punctualLights, update: updatePunctualLights } = createUniformBufferPunctualLights()

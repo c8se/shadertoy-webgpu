@@ -1,10 +1,10 @@
-import { children, createEffect, createMemo, JSX, onCleanup } from 'solid-js'
-import { createStore } from 'solid-js/store'
+import { children, createEffect, createMemo, onSettled, untrack } from 'solid-js'
+import type { JSX } from '@solidjs/web'
 import { GeometryOptions } from './geometry'
 import { createRenderPipeline } from './hks'
 import { defaultMaterial, MaterialOptions } from './material'
 import { createObject3DRef, Object3DProps, wgpuCompRender } from './object3d'
-import { MeshRef, Object3DComponent } from './types'
+import { $MESH, MeshRef, Object3DComponent } from './types'
 import { access } from './utils'
 
 export type MeshProps = Object3DProps<MeshRef> & {
@@ -14,27 +14,32 @@ export type MeshProps = Object3DProps<MeshRef> & {
 
 export const Mesh = (props: MeshProps) => {
   const ch = children(() => props.children)
-  const { store: _s, comp } = createObject3DRef(props, ch)
-  const id = _s.id
-  const [store, setStore] = createStore(_s as MeshRef)
-  props.ref?.(store)
-
-  createEffect(() => {
-    const setScene = store.scene()?.[1]
-    setScene?.('renderList', v => v.concat(id))
-
-    onCleanup(() => {
-      setScene?.('renderList', v => v.filter(x => id !== x))
-    })
+  let drawImpl: MeshRef['draw'] = () => {}
+  const { store, comp } = createObject3DRef<MeshRef>(props, ch, {
+    [$MESH]: true,
+    draw: passEncoder => drawImpl(passEncoder)
   })
+  const id = comp.id
+  onSettled(() => {
+    props.ref?.(store)
+  })
+
+  createEffect(
+    () => store.scene()?.[1],
+    setScene => {
+      if (!setScene) return
+      setScene(scene => {
+        scene.renderList.push(id)
+      })
+      return () =>
+        setScene(scene => {
+          const index = scene.renderList.indexOf(id)
+          if (index !== -1) scene.renderList.splice(index, 1)
+        })
+    }
+  )
 
   const material = () => props.material ?? defaultMaterial
-
-  createEffect(() => {
-    if (material().update) {
-      material().update?.(store)
-    }
-  })
 
   const pipelineOps = createMemo(() => ({
     shaderCode: material().shaderCode,
@@ -52,7 +57,12 @@ export const Mesh = (props: MeshProps) => {
   const _instanceCount = () => props.geometry.instanceCount ?? 1
   const _drawRange = () => props.geometry.drawRange ?? { start: 0, count: Infinity }
 
-  const draw = (passEncoder: GPURenderPassEncoder) => {
+  drawImpl = (passEncoder: GPURenderPassEncoder) => {
+    // GPU uniform updates are imperative snapshots. Running them at draw time
+    // avoids reading async material state from a tracked effect before an
+    // enclosing Loading boundary has revealed the mesh.
+    untrack(() => material().update?.(store))
+
     const _pipeline = pipeline()
     if (!_pipeline) {
       return
@@ -98,8 +108,6 @@ export const Mesh = (props: MeshProps) => {
       passEncoder.draw(3, instanceCount)
     }
   }
-
-  setStore('draw', () => draw)
 
   return {
     ...comp,

@@ -1,6 +1,6 @@
 import type { Mat4, Quat, Vec3 } from '@rubick24/math'
-import type { Accessor, JSX, Setter } from 'solid-js'
-import type { SetStoreFunction } from 'solid-js/store'
+import type { Accessor, Setter, StoreSetter } from 'solid-js'
+import type { JSX } from '@solidjs/web'
 
 export type Optional<T, K extends keyof T> = Partial<Pick<T, K>> & Omit<T, K>
 
@@ -34,7 +34,7 @@ export type ImageRepresentation =
 export type MaybeAccessor<T> = T | Accessor<T>
 export type MaybeAccessorValue<T extends MaybeAccessor<unknown>> = T extends () => any ? ReturnType<T> : T
 
-export type StoreContext<T> = [T, SetStoreFunction<T>]
+export type StoreContext<T> = [T, StoreSetter<T>]
 
 export const $WGPU_COMPONENT = Symbol('solid-webgpu component')
 export type WgpuComponent = {
@@ -77,7 +77,7 @@ export type Object3DExtra = {
 export type Object3DRef = NodeRef & Object3DExtra
 export type Object3DComponent = WgpuComponent & {
   [$OBJECT3D]: true
-  setParentCtx: Setter<StoreContext<Object3DRef> | undefined>
+  setParentCtx: Setter<Pick<Object3DRef, 'matrix'> | undefined>
 }
 export const isObject3DComponent = (value: unknown): value is Object3DComponent => {
   return isWgpuComponent(value) && $OBJECT3D in value

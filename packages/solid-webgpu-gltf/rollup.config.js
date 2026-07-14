@@ -20,7 +20,7 @@ export default {
     file: 'dist/index.js',
     format: 'es'
   },
-  external: ['solid-js', 'solid-webgpu'],
+  external: ['solid-js', '@solidjs/web', 'solid-webgpu'],
   plugins: [
     nodeResolve({
       extensions: ['.js', '.ts', '.tsx']

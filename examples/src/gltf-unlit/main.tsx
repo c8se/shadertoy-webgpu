@@ -1,5 +1,5 @@
 import { createSignal } from 'solid-js'
-import { render } from 'solid-js/web'
+import { render } from '@solidjs/web'
 import { Canvas, createOrbitControl, PerspectiveCamera, type CameraRef } from 'solid-webgpu'
 import { loadGLTF } from 'solid-webgpu-gltf'
 

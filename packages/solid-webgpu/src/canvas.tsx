@@ -1,5 +1,6 @@
 import { Vec3 } from '@rubick24/math'
-import { JSX, mergeProps, ParentProps, splitProps } from 'solid-js'
+import { merge, omit, onSettled, type ParentProps } from 'solid-js'
+import type { JSX } from '@solidjs/web'
 import { createRender } from './create-render'
 import { CameraRef } from './types'
 
@@ -30,7 +31,8 @@ export const Canvas = (props: CanvasProps) => {
     sampleCount: 4
   }
 
-  const [_props, rest] = splitProps(props, [
+  const rest = omit(
+    props,
     'children',
     'ref',
     'width',
@@ -42,13 +44,15 @@ export const Canvas = (props: CanvasProps) => {
     'camera',
     'update',
     'updateSignal'
-  ])
-  const propsWithDefault = mergeProps(defaultProps, _props)
+  )
+  const propsWithDefault = merge(defaultProps, props)
 
   const canvas = (
     <canvas {...rest} width={propsWithDefault.width} height={propsWithDefault.height} />
   ) as HTMLCanvasElement
-  propsWithDefault.ref?.(canvas)
+  onSettled(() => {
+    propsWithDefault.ref?.(canvas)
+  })
 
   const context = canvas.getContext('webgpu')!
 

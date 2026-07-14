@@ -1,16 +1,19 @@
 import { Mat4, Quat, QuatLike, Vec3, Vec3Like } from '@rubick24/math'
 import {
+  type Accessor,
   children,
-  ChildrenReturn,
+  type ChildrenReturn,
   createEffect,
   createSignal,
+  createStore,
   createUniqueId,
   For,
-  JSX,
-  onCleanup,
-  splitProps
+  onSettled,
+  type Setter,
+  type StoreSetter,
+  untrack
 } from 'solid-js'
-import { createStore, produce, SetStoreFunction } from 'solid-js/store'
+import type { JSX } from '@solidjs/web'
 import {
   $OBJECT3D,
   $WGPU_COMPONENT,
@@ -32,52 +35,89 @@ export type Object3DProps<T = {}> = NodeProps<T> & {
   scale?: Vec3Like
 }
 
+const DEFAULT_POSITION: Vec3Like = [0, 0, 0]
+const DEFAULT_QUATERNION: QuatLike = [0, 0, 0, 1]
+const DEFAULT_SCALE: Vec3Like = [1, 1, 1]
+
+// Context wiring is imperative: descendants must see the new context during
+// the same render pass, while subscribers can still update in Solid's normal
+// microtask batch. The internal revision signal opts into owned writes because
+// propagation happens from custom renderer scopes.
+const createContextSignal = <T,>() => {
+  let value: T | undefined
+  const [revision, setRevision] = createSignal(0, { ownedWrite: true })
+  const read: Accessor<T | undefined> = () => {
+    revision()
+    return value
+  }
+  const write = ((next?: T | ((previous: T | undefined) => T | undefined)) => {
+    value =
+      typeof next === 'function'
+        ? (next as (previous: T | undefined) => T | undefined)(value)
+        : next
+    setRevision(current => current + 1)
+    return value
+  }) as Setter<T | undefined>
+  return [read, write] as const
+}
+
 export const createNodeRef = <T extends NodeRef>(
   props: Omit<NodeProps, 'ref'>,
   ch: ChildrenReturn,
   init?: Omit<T, keyof NodeRef>
 ) => {
-  const [cProps] = splitProps(props, ['label'])
+  const [sceneCtx, setSceneCtx] = createContextSignal<StoreContext<SceneContext>>()
 
-  const [sceneCtx, setSceneCtx] = createSignal<StoreContext<SceneContext>>()
-
-  const NodeRef: NodeRef = {
+  const nodeRef: NodeRef = {
     [$WGPU_COMPONENT]: true as const,
     id: createUniqueId(),
     label: '',
     scene: sceneCtx,
     ...init
   }
+  const id = nodeRef.id
 
-  const [store, setStore] = createStore<NodeRef>(NodeRef)
-  createEffect(() => setStore('label', cProps.label ?? ''))
+  const [store, setStore] = createStore<NodeRef>(nodeRef)
+  createEffect(
+    () => props.label ?? '',
+    label =>
+      setStore(node => {
+        node.label = label
+      })
+  )
 
   // register node to scene
-  createEffect(() => {
-    const setScene = sceneCtx()?.[1]
-    setScene?.('nodes', store.id, store)
-    onCleanup(() => {
-      setScene?.(
-        'nodes',
-        produce(v => {
-          delete v[store.id]
+  createEffect(
+    () => sceneCtx()?.[1],
+    setScene => {
+      if (!setScene) return
+      setScene(scene => {
+        scene.nodes[id] = store
+      })
+      return () =>
+        setScene(scene => {
+          delete scene.nodes[id]
         })
-      )
-    })
-  })
+    }
+  )
 
   return {
+    // Extensions are installed in the initial value before the store is
+    // created; preserve that richer public type across this internal boundary.
     store: store as T,
-    setStore: setStore as SetStoreFunction<T>,
+    setStore: setStore as unknown as StoreSetter<T>,
     comp: {
       [$WGPU_COMPONENT]: true as const,
-      id: store.id,
+      id,
       setSceneCtx,
       render: () => {
-        ch.toArray().forEach(child => {
-          if (isWgpuComponent(child)) {
-            child.setSceneCtx(sceneCtx())
-          }
+        untrack(() => {
+          const currentScene = sceneCtx()
+          ch.toArray().forEach(child => {
+            if (isWgpuComponent(child)) {
+              child.setSceneCtx(currentScene)
+            }
+          })
         })
         return null
       }
@@ -88,7 +128,7 @@ export const wgpuCompRender = (ch: ChildrenReturn) => (
   <For each={ch.toArray()}>
     {child => {
       if (isWgpuComponent(child)) {
-        return child.render()
+        return untrack(() => child.render())
       }
       return child
     }}
@@ -121,61 +161,80 @@ export const createObject3DRef = <T extends Object3DRef>(
 
   const { store, setStore, comp } = createNodeRef<Object3DRef>(props, ch, { ...init, ...o3dExt })
 
-  const [o3dProps] = splitProps(props, ['position', 'quaternion', 'scale'])
+  createEffect(
+    () => props.position ?? DEFAULT_POSITION,
+    position => {
+      untrack(() => {
+        store.setPosition(v => {
+          v.copy(position)
+          return v
+        })
+      })
+    }
+  )
 
-  const id = store.id
+  createEffect(
+    () => props.quaternion ?? DEFAULT_QUATERNION,
+    quaternion => {
+      untrack(() => {
+        store.setQuaternion(v => {
+          v.copy(quaternion)
+          return v
+        })
+      })
+    }
+  )
 
-  createEffect(() => {
-    store.setPosition(v => {
-      v.copy(o3dProps.position ?? [0, 0, 0])
-      return v
-    })
-  })
+  createEffect(
+    () => props.scale ?? DEFAULT_SCALE,
+    scale => {
+      untrack(() => {
+        store.setScale(v => {
+          v.copy(scale)
+          return v
+        })
+      })
+    }
+  )
 
-  createEffect(() => {
-    store.setQuaternion(v => {
-      v.copy(o3dProps.quaternion ?? [0, 0, 0, 1])
-      return v
-    })
-  })
-
-  createEffect(() => {
-    store.setScale(v => {
-      v.copy(o3dProps.scale ?? [1, 1, 1])
-      return v
-    })
-  })
-
-  const [parentCtx, setParentCtx] = createSignal<StoreContext<Object3DRef>>()
+  const [parentCtx, setParentCtx] = createContextSignal<Pick<Object3DRef, 'matrix'>>()
 
   // update matrix
-  createEffect(() => {
-    const { quaternion, position, scale } = store
-    store.setMatrix(m => {
-      Mat4.fromRotationTranslationScale(m, quaternion(), position(), scale())
-
-      const pm = parentCtx()?.[0].matrix
-      if (pm) {
-        Mat4.mul(m, pm(), m)
-      }
-
-      return m
-    })
-  })
+  createEffect(
+    () => ({
+      quaternion: store.quaternion(),
+      position: store.position(),
+      scale: store.scale(),
+      parentMatrix: parentCtx()?.matrix()
+    }),
+    values => {
+      untrack(() => {
+        store.setMatrix(m => {
+          Mat4.fromRotationTranslationScale(m, values.quaternion, values.position, values.scale)
+          if (values.parentMatrix) {
+            Mat4.mul(m, values.parentMatrix, m)
+          }
+          return m
+        })
+      })
+    }
+  )
 
   return {
     store: store as T,
-    setStore: setStore as SetStoreFunction<T>,
+    setStore: setStore as unknown as StoreSetter<T>,
     comp: {
       ...comp,
       [$OBJECT3D]: true as const,
       setParentCtx,
       render: () => {
-        comp.render()
-        ch.toArray().forEach(child => {
-          if (isObject3DComponent(child)) {
-            child.setParentCtx([store, setStore])
-          }
+        untrack(() => {
+          comp.render()
+          ch.toArray().forEach(child => {
+            if (isObject3DComponent(child)) {
+              child.setParentCtx(store)
+            }
+          })
         })
         return null
       }
@@ -187,7 +246,9 @@ export const Object3D = (props: Object3DProps) => {
   const ch = children(() => props.children)
   const { store, comp } = createObject3DRef(props, ch)
 
-  props.ref?.(store)
+  onSettled(() => {
+    props.ref?.(store)
+  })
 
   return {
     ...comp,

@@ -1,5 +1,6 @@
 import { DEG2RAD, Mat4, Quat, Vec3 } from '@rubick24/math'
-import { children, createEffect, createSignal, JSX, mergeProps, splitProps } from 'solid-js'
+import { children, createEffect, createSignal, merge, omit, onSettled, untrack } from 'solid-js'
+import type { JSX } from '@solidjs/web'
 import { createObject3DRef, Object3DProps, wgpuCompRender } from './object3d'
 import { $CAMERA, CameraExtra, CameraRef, Object3DComponent } from './types'
 
@@ -30,24 +31,33 @@ export const Camera = (props: CameraProps) => {
   } satisfies CameraExtra
   const { store, comp } = createObject3DRef<CameraRef>(props, ch, cameraExt)
 
-  props.ref?.(store)
-
-  createEffect(() => {
-    store.setViewMatrix(m => {
-      const mat = store.matrix()
-      m.copy(mat).invert()
-      return m
-    })
+  onSettled(() => {
+    props.ref?.(store)
   })
 
-  createEffect(() => {
-    store.setProjectionViewMatrix(m => {
-      const p = store.projectionMatrix()
-      const v = store.viewMatrix()
-      m.copy(p).multiply(v)
-      return m
-    })
-  })
+  createEffect(
+    () => store.matrix(),
+    matrix => {
+      untrack(() => {
+        store.setViewMatrix(m => {
+          m.copy(matrix).invert()
+          return m
+        })
+      })
+    }
+  )
+
+  createEffect(
+    () => [store.projectionMatrix(), store.viewMatrix()] as const,
+    ([projection, view]) => {
+      untrack(() => {
+        store.setProjectionViewMatrix(m => {
+          m.copy(projection).multiply(view)
+          return m
+        })
+      })
+    }
+  )
 
   return {
     ...comp,
@@ -62,32 +72,43 @@ export type PerspectiveCameraProps = CameraProps & {
   far?: number
 }
 export const PerspectiveCamera = (props: PerspectiveCameraProps) => {
-  const [_local, others] = splitProps(props, ['ref', 'fov', 'aspect', 'near', 'far'])
+  const others = omit(props, 'ref', 'fov', 'aspect', 'near', 'far')
 
-  const local = mergeProps(
+  const local = merge(
     {
       fov: 75 * DEG2RAD,
       aspect: 1,
       near: 0.1,
       far: 1000
     },
-    _local
-  ) as Required<PerspectiveCameraProps>
+    props
+  )
 
-  let cameraRef!: CameraRef
+  const [cameraRef, setCameraRef] = createSignal<CameraRef>()
 
-  createEffect(() => {
-    cameraRef.setProjectionMatrix(m => {
-      Mat4.perspectiveZO(m, local.fov, local.aspect, local.near, local.far)
-      return m
-    })
-  })
+  createEffect(
+    () => ({
+      camera: cameraRef(),
+      fov: local.fov,
+      aspect: local.aspect,
+      near: local.near,
+      far: local.far
+    }),
+    values => {
+      untrack(() => {
+        values.camera?.setProjectionMatrix(m => {
+          Mat4.perspectiveZO(m, values.fov, values.aspect, values.near, values.far)
+          return m
+        })
+      })
+    }
+  )
 
   return (
     <Camera
       {...others}
       ref={v => {
-        cameraRef = v
+        setCameraRef(v)
         local.ref?.(v)
       }}
     />
@@ -103,9 +124,9 @@ export type OrthographicCameraProps = CameraProps & {
   top?: number
 }
 export const OrthographicCamera = (props: OrthographicCameraProps) => {
-  const [_local, others] = splitProps(props, ['ref', 'near', 'far', 'left', 'right', 'bottom', 'top'])
+  const others = omit(props, 'ref', 'near', 'far', 'left', 'right', 'bottom', 'top')
 
-  const local = mergeProps(
+  const local = merge(
     {
       near: 0.1,
       far: 1000,
@@ -114,23 +135,36 @@ export const OrthographicCamera = (props: OrthographicCameraProps) => {
       bottom: -1,
       top: 1
     },
-    _local
-  ) as Required<OrthographicCameraProps>
+    props
+  )
 
-  let cameraRef!: CameraRef
+  const [cameraRef, setCameraRef] = createSignal<CameraRef>()
 
-  createEffect(() => {
-    cameraRef.setProjectionMatrix(m => {
-      Mat4.orthoZO(m, local.left, local.right, local.bottom, local.top, local.near, local.far)
-      return m
-    })
-  })
+  createEffect(
+    () => ({
+      camera: cameraRef(),
+      left: local.left,
+      right: local.right,
+      bottom: local.bottom,
+      top: local.top,
+      near: local.near,
+      far: local.far
+    }),
+    values => {
+      untrack(() => {
+        values.camera?.setProjectionMatrix(m => {
+          Mat4.orthoZO(m, values.left, values.right, values.bottom, values.top, values.near, values.far)
+          return m
+        })
+      })
+    }
+  )
 
   return (
     <Camera
       {...others}
       ref={v => {
-        cameraRef = v
+        setCameraRef(v)
         local.ref?.(v)
       }}
     />

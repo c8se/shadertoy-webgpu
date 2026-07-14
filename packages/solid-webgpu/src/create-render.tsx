@@ -1,6 +1,6 @@
 import { Vec3 } from '@rubick24/math'
-import { batch, children, createEffect, For, JSX, onCleanup } from 'solid-js'
-import { createStore } from 'solid-js/store'
+import { children, createEffect, createStore, For, snapshot, untrack } from 'solid-js'
+import type { JSX } from '@solidjs/web'
 import { device } from './hks'
 import { CameraRef, isWgpuComponent, MaybeAccessor, MeshRef, SceneContext } from './types'
 import { access } from './utils'
@@ -47,130 +47,144 @@ export const createRender = (
     renderOrder: [],
     lightList: []
   })
-  createEffect(() => {
-    const opts = access(options)
-
-    setScene(v => ({
-      ...v,
-      width: opts.texture?.width ?? opts.width ?? v.width,
-      height: opts.texture?.height ?? opts.height ?? v.height,
-      format: opts.texture?.format ?? opts.format ?? v.format,
-      sampleCount: opts.sampleCount ?? v.sampleCount,
-      autoClear: opts.autoClear ?? v.autoClear,
-      clearValue: opts.clearValue ?? v.clearValue,
-      currentCamera: opts.camera?.id ?? v.currentCamera,
-      texture: opts.texture ?? v.texture,
-      canvas: opts.canvas ?? v.canvas,
-      context: opts.context ?? v.context,
-
-      update: opts.update ?? v.update
-    }))
-  })
+  createEffect(
+    () => {
+      const opts = access(options)
+      return { opts, cameraId: opts.camera?.id }
+    },
+    ({ opts, cameraId }) =>
+      setScene(scene => {
+        scene.width = opts.texture?.width ?? opts.width ?? scene.width
+        scene.height = opts.texture?.height ?? opts.height ?? scene.height
+        scene.format = opts.texture?.format ?? opts.format ?? scene.format
+        scene.sampleCount = opts.sampleCount ?? scene.sampleCount
+        scene.autoClear = opts.autoClear ?? scene.autoClear
+        scene.clearValue = opts.clearValue ?? scene.clearValue
+        scene.currentCamera = cameraId ?? scene.currentCamera
+        scene.texture = opts.texture ?? scene.texture
+        scene.canvas = opts.canvas ?? scene.canvas
+        scene.context = opts.context ?? scene.context
+        scene.update = opts.update ?? scene.update
+      })
+  )
 
   /**
    * resize swapchain
    */
-  createEffect(() => {
-    const { context, format } = scene
-    if (context) {
-      context.configure({
-        device,
+  createEffect(
+    () => {
+      // Track the store field, but pass the raw WebIDL object to WebGPU.
+      const context = scene.context ? snapshot(scene).context : undefined
+      return {
+        context,
+        format: scene.format,
+        width: scene.width,
+        height: scene.height,
+        sampleCount: scene.sampleCount
+      }
+    },
+    ({ context, format, width, height, sampleCount }) => {
+      if (context) {
+        context.configure({
+          device,
+          format,
+          alphaMode: 'premultiplied'
+        })
+      }
+
+      const size = [width, height]
+      const usage = GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT
+      const msaaTexture = device.createTexture({
         format,
-        alphaMode: 'premultiplied'
+        size,
+        usage,
+        sampleCount,
+        label: 'msaaTexture'
       })
+      const depthTexture = device.createTexture({
+        format: 'depth24plus-stencil8',
+        size,
+        usage,
+        sampleCount,
+        label: 'depthTexture'
+      })
+
+      setScene(scene => {
+        scene.msaaTexture = msaaTexture
+        scene.msaaTextureView = msaaTexture.createView({ label: 'msaaTextureView' })
+        scene.depthTexture = depthTexture
+        scene.depthTextureView = depthTexture.createView({ label: 'depthTextureView' })
+      })
+
+      return () => {
+        msaaTexture.destroy()
+        depthTexture.destroy()
+      }
     }
-
-    const size = [scene.width, scene.height]
-    const usage = GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT
-    const sampleCount = scene.sampleCount
-
-    const msaaTexture = device.createTexture({
-      format,
-      size,
-      usage,
-      sampleCount,
-      label: 'msaaTexture'
-    })
-    const depthTexture = device.createTexture({
-      format: 'depth24plus-stencil8',
-      size,
-      usage,
-      sampleCount,
-      label: 'depthTexture'
-    })
-
-    batch(() => {
-      setScene('msaaTexture', msaaTexture)
-      setScene('msaaTextureView', msaaTexture.createView({ label: 'msaaTextureView' }))
-      setScene('depthTexture', depthTexture)
-      setScene('depthTextureView', depthTexture.createView({ label: 'depthTextureView' }))
-    })
-
-    onCleanup(() => {
-      msaaTexture.destroy()
-      depthTexture.destroy()
-    })
-  })
+  )
 
   /**
    * update render order
    */
-  createEffect(() => {
-    if (!scene.currentCamera) {
-      return
-    }
-    const camera = scene.nodes[scene.currentCamera] as CameraRef
-    if (!camera) {
-      return
-    }
-    const projectionViewMatrix = camera.projectionViewMatrix()
+  createEffect(
+    () => {
+      if (!scene.currentCamera) return
+      const camera = scene.nodes[scene.currentCamera] as CameraRef
+      if (!camera) return
+      const projectionViewMatrix = camera.projectionViewMatrix()
 
-    const renderOrder = scene.renderList
-      .map(id => {
-        const v = scene.nodes[id] as MeshRef
-        return {
-          m: v.matrix(),
-          id: v.id
-        }
+      return scene.renderList
+        .map(id => {
+          const v = scene.nodes[id] as MeshRef
+          return {
+            m: v.matrix(),
+            id: v.id
+          }
+        })
+        .sort((a, b) => {
+          let res = 0
+          // TODO: handle depthTest disabled
+          const am = a.m
+          const bm = b.m
+
+          Vec3.set(tempVec3, am[12], am[13], am[14])
+          Vec3.transformMat4(tempVec3, tempVec3, projectionViewMatrix)
+          const tempZ = tempVec3.z
+          Vec3.set(tempVec3, bm[12], bm[13], bm[14])
+          Vec3.transformMat4(tempVec3, tempVec3, projectionViewMatrix)
+          res = res || tempZ - tempVec3.z
+          return res
+        })
+        .map(v => v.id)
+    },
+    renderOrder => {
+      if (!renderOrder) return
+      setScene(scene => {
+        scene.renderOrder = renderOrder
       })
-      .sort((a, b) => {
-        let res = 0
-        // TODO: handle depthTest disabled
-        const am = a.m
-        const bm = b.m
-
-        Vec3.set(tempVec3, am[12], am[13], am[14])
-        Vec3.transformMat4(tempVec3, tempVec3, projectionViewMatrix)
-        const tempZ = tempVec3.z
-        Vec3.set(tempVec3, bm[12], bm[13], bm[14])
-        Vec3.transformMat4(tempVec3, tempVec3, projectionViewMatrix)
-        res = res || tempZ - tempVec3.z
-        return res
-      })
-      .map(v => v.id)
-
-    setScene('renderOrder', renderOrder)
-  })
+    }
+  )
 
   // render function
   const renderFn = () => {
-    const { msaaTextureView, depthTextureView, context, renderOrder } = scene
+    const currentScene = snapshot(scene)
+    const { msaaTextureView, depthTextureView, context, renderOrder } = currentScene
     if (!msaaTextureView || !depthTextureView) {
       return
     }
 
-    const resolveTarget = scene.texture?.createView() ?? context?.getCurrentTexture().createView()
-    const loadOp: GPULoadOp = scene.autoClear ? 'clear' : 'load'
+    const resolveTarget = currentScene.texture?.createView() ?? context?.getCurrentTexture().createView()
+    const loadOp: GPULoadOp = currentScene.autoClear ? 'clear' : 'load'
     const storeOp: GPUStoreOp = 'store'
     const commandEncoder = device.createCommandEncoder()
 
-    const direct = context && scene.sampleCount === 1
+    const direct = context && currentScene.sampleCount === 1
     const colorAttachment: GPURenderPassColorAttachment = {
       view: direct ? resolveTarget! : msaaTextureView,
       resolveTarget: direct ? undefined : resolveTarget,
       loadOp,
       storeOp,
-      clearValue: scene.clearValue
+      clearValue: currentScene.clearValue
     }
 
     const passEncoder = commandEncoder.beginRenderPass({
@@ -185,9 +199,9 @@ export const createRender = (
         stencilStoreOp: storeOp
       }
     })
-    passEncoder.setViewport(0, 0, scene.width, scene.height, 0, 1)
+    passEncoder.setViewport(0, 0, currentScene.width, currentScene.height, 0, 1)
     for (const id of renderOrder) {
-      const mesh = scene.nodes[id] as MeshRef
+      const mesh = currentScene.nodes[id] as MeshRef
       mesh.draw(passEncoder)
     }
 
@@ -195,37 +209,35 @@ export const createRender = (
     device.queue.submit([commandEncoder.finish()])
   }
 
-  const updateSignal = access(options).updateSignal
-
   let timeout = NaN
-  createEffect(() => {
-    // Explicitly list all dependencies that should trigger a re-render
-    const deps = {
-      renderOrder: scene.renderOrder,
-      width: scene.width,
-      height: scene.height,
-      autoClear: scene.autoClear,
-      clearValue: scene.clearValue,
-      texture: scene.texture,
-      sampleCount: scene.sampleCount
-    }
-    // trigger update if exists
-    updateSignal?.()
-
-    if (timeout) {
-      cancelAnimationFrame(timeout)
-    }
-    timeout = requestAnimationFrame(t => {
-      scene.update?.(t)
-      renderFn()
-    })
-
-    onCleanup(() => {
-      if (timeout) {
-        cancelAnimationFrame(timeout)
+  createEffect(
+    () => {
+      // Explicitly list all dependencies that should trigger a re-render.
+      const deps = {
+        renderOrder: scene.renderOrder,
+        width: scene.width,
+        height: scene.height,
+        autoClear: scene.autoClear,
+        clearValue: scene.clearValue,
+        texture: scene.texture,
+        sampleCount: scene.sampleCount
       }
-    })
-  })
+      access(options).updateSignal?.()
+      return deps
+    },
+    () => {
+      timeout = requestAnimationFrame(t => {
+        untrack(() => {
+          snapshot(scene).update?.(t)
+          renderFn()
+        })
+      })
+
+      return () => {
+        if (timeout) cancelAnimationFrame(timeout)
+      }
+    }
+  )
 
   const c = children(ch)
 
@@ -234,7 +246,7 @@ export const createRender = (
       {child => {
         if (isWgpuComponent(child)) {
           child.setSceneCtx([scene, setScene])
-          return child.render()
+          return untrack(() => child.render())
         }
         return child
       }}

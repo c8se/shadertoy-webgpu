@@ -1,5 +1,5 @@
-import { createResource, createSignal, Show } from 'solid-js'
-import { render } from 'solid-js/web'
+import { createSignal, Show } from 'solid-js'
+import { render } from '@solidjs/web'
 import type { CameraRef, QuatLike, Vec3Like } from 'solid-webgpu'
 import {
   Canvas,
@@ -13,21 +13,28 @@ import {
   Quat
 } from 'solid-webgpu'
 
-const Avatar = (props: { position?: Vec3Like; quaternion?: QuatLike }) => {
-  const [t] = createResource(async () => {
-    await new Promise(r => setTimeout(r, 1000))
-    return imageBitmapFromImageUrl('../../static/a.png')
-  })
-
+const Avatar = (props: {
+  texture: ImageBitmap
+  position?: Vec3Like
+  quaternion?: QuatLike
+}) => {
   const planeGeo = createPlaneGeometry()
   const pbrMat = createPBRMaterial(() => ({
-    albedoTextureSource: t(),
-    occlusionRoughnessMetallicTextureSource: t()
+    albedoTextureSource: props.texture,
+    occlusionRoughnessMetallicTextureSource: props.texture
   }))
-  return <Mesh geometry={planeGeo} material={pbrMat()} {...props} />
+
+  return (
+    <Mesh
+      geometry={planeGeo}
+      material={pbrMat()}
+      position={props.position}
+      quaternion={props.quaternion}
+    />
+  )
 }
 
-const App = () => {
+const App = (props: { texture: ImageBitmap }) => {
   const [p, setP] = createSignal(0)
   const [camera, setCamera] = createSignal<CameraRef>()
   const [canvas, setCanvas] = createSignal<HTMLCanvasElement>()
@@ -59,11 +66,11 @@ const App = () => {
           intensity={100}
         />
         {x}
-        <Avatar position={[0, p(), 0]} />
+        <Avatar texture={props.texture} position={[0, p(), 0]} />
 
         {/* conditional rendering */}
         <Show when={p() % 2 === 1}>
-          <Avatar position={[3, 0, 0]} />
+          <Avatar texture={props.texture} position={[3, 0, 0]} />
         </Show>
       </Canvas>
 
@@ -72,4 +79,5 @@ const App = () => {
   )
 }
 
-render(() => <App />, document.getElementById('app')!)
+const texture = await imageBitmapFromImageUrl('../../static/a.png')
+render(() => <App texture={texture} />, document.getElementById('app')!)

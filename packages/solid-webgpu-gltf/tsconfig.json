@@ -3,7 +3,7 @@
   "compilerOptions": {
     "outDir": "./dist",
     "jsx": "preserve",
-    "jsxImportSource": "solid-js",
+    "jsxImportSource": "@solidjs/web",
     "declaration": true,
     "emitDeclarationOnly": true
   },

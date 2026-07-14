@@ -1,5 +1,6 @@
 import { Vec3, Vec3Like } from '@rubick24/math'
-import { children, createEffect, createSignal, JSX, onCleanup } from 'solid-js'
+import { children, createEffect, createSignal, onSettled, untrack } from 'solid-js'
+import type { JSX } from '@solidjs/web'
 import { createObject3DRef, Object3DProps, wgpuCompRender } from './object3d'
 import { $PUNCTUAL_LIGHT, Object3DComponent, PunctualLightExtra, PunctualLightRef } from './types'
 
@@ -8,6 +9,8 @@ export type PunctualLightProps = Object3DProps<PunctualLightRef> & {
   intensity?: number
   range?: number
 } & ({ type?: 'directional' | 'point' } | { type: 'spot'; innerConeAngle?: number; outerConeAngle?: number })
+
+const DEFAULT_COLOR: Vec3Like = [0, 0, 0]
 
 export const PunctualLight = (props: PunctualLightProps) => {
   const ch = children(() => props.children)
@@ -25,39 +28,54 @@ export const PunctualLight = (props: PunctualLightProps) => {
   } satisfies PunctualLightExtra
   const { store, setStore, comp } = createObject3DRef<PunctualLightRef>(props, ch, lightExt)
 
-  const id = store.id
+  const id = comp.id
 
-  props.ref?.(store)
-
-  createEffect(() =>
-    store.setColor(v => {
-      v.copy(props.color ?? [0, 0, 0])
-      return v
-    })
-  )
-  createEffect(() => setStore('intensity', props.intensity ?? 1))
-  createEffect(() => setStore('range', props.range))
-  createEffect(() => setStore('lightType', props.type ?? 'directional'))
-  createEffect(() =>
-    setStore(
-      'innerConeAngle',
-      'innerConeAngle' in props && props.innerConeAngle !== undefined ? props.innerConeAngle : 0
-    )
-  )
-  createEffect(() =>
-    setStore(
-      'outerConeAngle',
-      'outerConeAngle' in props && props.outerConeAngle !== undefined ? props.outerConeAngle : Math.PI / 4
-    )
-  )
-
-  createEffect(() => {
-    const setScene = store.scene()?.[1]
-    setScene?.('lightList', v => v.concat(id))
-    onCleanup(() => {
-      setScene?.('lightList', v => v.filter(x => id !== x))
-    })
+  onSettled(() => {
+    props.ref?.(store)
   })
+
+  createEffect(
+    () => ({
+      color: props.color ?? DEFAULT_COLOR,
+      intensity: props.intensity ?? 1,
+      range: props.range,
+      lightType: props.type ?? 'directional',
+      innerConeAngle:
+        'innerConeAngle' in props && props.innerConeAngle !== undefined ? props.innerConeAngle : 0,
+      outerConeAngle:
+        'outerConeAngle' in props && props.outerConeAngle !== undefined ? props.outerConeAngle : Math.PI / 4
+    }),
+    values => {
+      untrack(() => {
+        store.setColor(color => {
+          color.copy(values.color)
+          return color
+        })
+        setStore(light => {
+          light.intensity = values.intensity
+          light.range = values.range
+          light.lightType = values.lightType
+          light.innerConeAngle = values.innerConeAngle
+          light.outerConeAngle = values.outerConeAngle
+        })
+      })
+    }
+  )
+
+  createEffect(
+    () => store.scene()?.[1],
+    setScene => {
+      if (!setScene) return
+      setScene(scene => {
+        scene.lightList.push(id)
+      })
+      return () =>
+        setScene(scene => {
+          const index = scene.lightList.indexOf(id)
+          if (index !== -1) scene.lightList.splice(index, 1)
+        })
+    }
+  )
 
   return {
     ...comp,

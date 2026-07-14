@@ -1,3 +1,4 @@
+import { untrack } from 'solid-js'
 import { createBufferFromValue, Mesh } from 'solid-webgpu'
 import { getAccessor } from './get-accessor'
 import { getMaterial } from './get-material'
@@ -29,10 +30,12 @@ export const getMesh = async (index: number, context: LoaderContext) => {
         const indexBuffer =
           primitive.indices !== undefined
             ? {
-                buffer: createBufferFromValue(
-                  { usage: GPUBufferUsage.INDEX | GPUBufferUsage.COPY_DST },
-                  ibAc.bufferData
-                )(),
+                buffer: untrack(() =>
+                  createBufferFromValue(
+                    { usage: GPUBufferUsage.INDEX | GPUBufferUsage.COPY_DST },
+                    ibAc.bufferData
+                  )()
+                ),
                 BYTES_PER_ELEMENT: ibAc.bufferData.BYTES_PER_ELEMENT
               }
             : undefined
@@ -41,7 +44,7 @@ export const getMesh = async (index: number, context: LoaderContext) => {
           const buffer = accessor.bufferData
           const vbs = createBufferFromValue({ usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST }, buffer)
           return {
-            buffer: vbs(),
+            buffer: untrack(() => vbs()),
             layout: {
               arrayStride: accessor.arrayStride,
               attributes: [
